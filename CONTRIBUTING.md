@@ -11,6 +11,9 @@ By participating you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md)
 * **Model weights never enter git.** They are ~400 MB and Apache-2.0 licensed by
   Google. `models/` is gitignored. If a PR adds a `.onnx`, `.tflite`, or
   `.safetensors` file, it will be closed.
+* **Feedback data never enters git either.** `data/feedback.sqlite3` and
+  `data/feedback_clips/` are locally generated, self-hosted data (see README
+  "Feedback"), gitignored, and should stay that way.
 * **This wrapper is MIT. The model is not.** Do not add code that implies the
   Perch weights are MIT licensed. See [NOTICE](NOTICE).
 * **Be honest about accuracy.** Perch 2.0 is bird-heavy and has no bat coverage.
