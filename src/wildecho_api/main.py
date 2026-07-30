@@ -52,7 +52,7 @@ UPLOAD_CHUNK_BYTES = 1 << 20  # 1 MiB
 
 DISCLAIMER = (
     "Perch 2.0 recognises about 14,600 taxa, but its training data is heavily "
-    "bird-weighted: roughly two thirds of its species classes are birds, and its "
+    "bird-weighted: about 70% of its species classes are birds (10,256 of 14,597), and its "
     "non-bird coverage (insects, frogs, mammals) is much thinner and less evenly "
     "sampled. There is no bat coverage at all, because bat echolocation is largely "
     "ultrasonic and this model only sees audio up to 16 kHz. Results for anything "
