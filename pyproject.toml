@@ -1,0 +1,139 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wildecho-api"
+version = "0.1.0"
+description = "Self-hostable species ID from audio, powered by Google's open Perch 2.0 model"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Arun Rajiah", email = "arunrajiah@gmail.com" }]
+keywords = [
+    "bioacoustics",
+    "perch",
+    "species-identification",
+    "birdsong",
+    "onnx",
+    "fastapi",
+    "wildlife",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-multipart>=0.0.9",
+    "numpy>=1.26",
+    "onnxruntime>=1.18",
+    "slowapi>=0.1.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/arunrajiah/wildecho-api"
+Repository = "https://github.com/arunrajiah/wildecho-api"
+Issues = "https://github.com/arunrajiah/wildecho-api/issues"
+Changelog = "https://github.com/arunrajiah/wildecho-api/blob/main/CHANGELOG.md"
+
+[project.scripts]
+wildecho-download-model = "wildecho_api.cli:download_model_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wildecho_api"]
+
+# data/taxonomy.csv is looked up relative to the repo root at runtime, and also
+# shipped inside the wheel so `pip install wildecho-api` works standalone.
+[tool.hatch.build.targets.wheel.force-include]
+"data/taxonomy.csv" = "wildecho_api/data/taxonomy.csv"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "data", "tests", "scripts", "README.md", "LICENSE", "NOTICE"]
+
+# ---------------------------------------------------------------------------
+# Lint / format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["models"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "B008",  # FastAPI's Depends()/File() defaults are the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+# 3.12, not the 3.11 floor: numpy's bundled stubs use PEP 695 `type` statements,
+# which mypy rejects when told to assume 3.11. Runtime support is still 3.11+, and
+# ruff's target-version=py311 is what enforces that in the source.
+python_version = "3.12"
+files = ["src", "scripts"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_configs = true
+# Left off deliberately: an ignore that is needed on one Python or numpy version
+# is often redundant on another, and this project tests three versions.
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = ["slowapi.*", "onnxruntime.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not model'"
+asyncio_mode = "auto"
+markers = [
+    "model: requires the real Perch ONNX weights in models/ (run with `pytest -m model`)",
+]
+filterwarnings = ["error::DeprecationWarning:wildecho_api.*"]

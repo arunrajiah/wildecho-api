@@ -1,0 +1,71 @@
+wildecho-api
+Copyright (c) 2026 Arun Rajiah
+Licensed under the MIT License (see LICENSE).
+
+This product depends on, and redistributes derived metadata from, the following
+third-party works. None of the licenses below are superseded by this project's
+MIT license.
+
+--------------------------------------------------------------------------------
+1. Perch 2.0 (model weights and class list)
+--------------------------------------------------------------------------------
+Copyright Google LLC / Google Research (Perch team)
+Licensed under the Apache License, Version 2.0
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Perch 2.0 is a bioacoustics classifier and embedding model released by Google
+Research. This repository does NOT redistribute the model weights. They are
+downloaded at setup time by `scripts/download_model.py` from:
+
+  - ONNX export:  https://huggingface.co/justinchuby/Perch-onnx
+                  (community ONNX export of the official model, Apache-2.0)
+  - Class list:   https://huggingface.co/cgeorgiaw/Perch
+                  (assets/labels.csv, assets/perch_v2_ebird_classes.csv)
+  - Upstream:     https://github.com/google-research/perch
+                  https://www.kaggle.com/models/google/perch
+
+Citation:
+  Hamer, J., Denton, T., et al. "Perch 2.0: The Bittern Lesson for
+  Bioacoustics." arXiv:2508.04665 (2025).
+
+--------------------------------------------------------------------------------
+2. Perch class list derivatives (data/taxonomy.csv)
+--------------------------------------------------------------------------------
+`data/taxonomy.csv` is a derived work. Its `label` and `ebird_code` columns are
+derived from the Perch 2.0 asset files listed above (Apache-2.0, Google LLC).
+The Apache-2.0 license and attribution therefore apply to those columns.
+
+--------------------------------------------------------------------------------
+3. Wikidata (common names and taxonomic ranks in data/taxonomy.csv)
+--------------------------------------------------------------------------------
+Data from Wikidata (https://www.wikidata.org), dedicated to the public domain
+under Creative Commons CC0 1.0.
+    https://creativecommons.org/publicdomain/zero/1.0/
+
+--------------------------------------------------------------------------------
+4. GBIF Backbone Taxonomy (taxonomic class resolution in data/taxonomy.csv)
+--------------------------------------------------------------------------------
+Retrieved via the GBIF species match API (https://api.gbif.org).
+GBIF Secretariat. GBIF Backbone Taxonomy. Checklist dataset.
+Licensed under Creative Commons CC-BY 4.0.
+    https://creativecommons.org/licenses/by/4.0/
+
+--------------------------------------------------------------------------------
+5. Bundled test audio (tests/fixtures/european_nightjar_xc1008591.mp3)
+--------------------------------------------------------------------------------
+Recording of a European Nightjar (Caprimulgus europaeus) by ChristianSW.
+Source: Xeno-canto XC1008591, via Wikimedia Commons.
+Dedicated to the public domain under Creative Commons CC0 1.0.
+    https://creativecommons.org/publicdomain/zero/1.0/
+    https://commons.wikimedia.org/wiki/File:Caprimulgus_europaeus_-_European_Nightjar_XC1008591.mp3
+    https://www.xeno-canto.org/1008591
+
+The bundled file is a trimmed and re-encoded excerpt of the original. CC0
+imposes no attribution requirement; credit is given here voluntarily.
+
+--------------------------------------------------------------------------------
+6. Contributor Covenant (CODE_OF_CONDUCT.md)
+--------------------------------------------------------------------------------
+Contributor Covenant, version 2.1.
+Licensed under Creative Commons Attribution 4.0 International.
+    https://www.contributor-covenant.org/version/2/1/code_of_conduct.html

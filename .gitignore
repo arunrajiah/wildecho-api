@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Model weights: NEVER commit these. They are downloaded by
+# `python scripts/download_model.py` and are ~400 MB each.
+# ---------------------------------------------------------------------------
+# Ignore the contents but keep the directory, so a fresh clone has a mount point
+# for docker-compose and a destination for scripts/download_model.py.
+models/*
+!models/.gitkeep
+*.onnx
+*.tflite
+*.pb
+*.h5
+*.ckpt
+*.safetensors
+variables/
+
+# Model download cache / raw upstream assets
+.cache/
+scripts/.taxonomy_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test / lint / type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Scratch
+tmp/
+scratch/
+*.log

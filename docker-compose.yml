@@ -1,0 +1,51 @@
+services:
+  wildecho-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wildecho-api:local
+    container_name: wildecho-api
+    restart: unless-stopped
+    ports:
+      - "${WILDECHO_PORT:-8000}:8000"
+
+    volumes:
+      # Model weights live on the host and are mounted read-only. Populate this
+      # directory once with:  python scripts/download_model.py
+      # Weights are ~390 MiB, Apache-2.0, copyright Google LLC, and are never
+      # committed to git or baked into the image.
+      - ./models:/app/models:ro
+
+    environment:
+      WILDECHO_MODEL_PATH: /app/models/perch_v2.onnx
+      WILDECHO_TAXONOMY_PATH: /app/data/taxonomy.csv
+
+      # Per-IP rate limit. The default is a conservative free-tier figure. Raise it
+      # for private use; see the README for the reverse-proxy caveat.
+      WILDECHO_RATE_LIMIT: "${WILDECHO_RATE_LIMIT:-20/hour}"
+      WILDECHO_RATE_LIMIT_ENABLED: "${WILDECHO_RATE_LIMIT_ENABLED:-true}"
+
+      # Permissive by default so a mobile app works without a proxy. Set this to
+      # your app's origins before exposing the service publicly.
+      WILDECHO_CORS_ORIGINS: "${WILDECHO_CORS_ORIGINS:-*}"
+
+      WILDECHO_MAX_UPLOAD_BYTES: "${WILDECHO_MAX_UPLOAD_BYTES:-26214400}"
+      WILDECHO_MAX_DURATION_SECONDS: "${WILDECHO_MAX_DURATION_SECONDS:-300}"
+      WILDECHO_LOW_CONFIDENCE_THRESHOLD: "${WILDECHO_LOW_CONFIDENCE_THRESHOLD:-0.3}"
+      WILDECHO_TOP_K: "${WILDECHO_TOP_K:-10}"
+      WILDECHO_LOG_LEVEL: "${WILDECHO_LOG_LEVEL:-INFO}"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+    # Inference is CPU-bound. Uncomment and tune for your hardware; without a
+    # limit one long clip can saturate every core on the host.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2.0"
+    #       memory: 2G
