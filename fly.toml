@@ -1,0 +1,66 @@
+# Fly.io deployment config for wildecho-api.
+#
+# Quickstart (from the repo root):
+#
+#   fly launch --no-deploy               # creates the app, skip if already done
+#   fly volumes create wildecho_data --region iad --size 3
+#   fly deploy
+#
+# The volume is 3 GB: ~390 MiB for the model weights, the rest is headroom for the
+# SQLite feedback database and any stored feedback clips. Resize later with
+# `fly volumes extend` if you store a lot of feedback audio.
+#
+# Model weights are fetched automatically on first boot (see docker/entrypoint.sh)
+# because WILDECHO_AUTO_DOWNLOAD_MODEL is set to true below, onto the persistent
+# volume, so it only happens once across restarts and deploys. If you'd rather
+# control that step yourself, set it back to false here and instead run:
+#
+#   fly ssh console -C "python scripts/download_model.py --output-dir /data/models"
+#
+# `app` must be globally unique across all of Fly - pick your own name before
+# running `fly launch`, or `fly launch` will prompt you to.
+
+app = "wildecho-api"
+primary_region = "iad"
+
+[build]
+
+[env]
+  WILDECHO_MODEL_PATH = "/data/models/perch_v2.onnx"
+  WILDECHO_TAXONOMY_PATH = "/app/data/taxonomy.csv"
+  WILDECHO_FEEDBACK_DB_PATH = "/data/feedback.sqlite3"
+  WILDECHO_FEEDBACK_CLIPS_DIR = "/data/feedback_clips"
+  WILDECHO_AUTO_DOWNLOAD_MODEL = "true"
+  WILDECHO_LOG_FORMAT = "json"
+  WILDECHO_LOG_LEVEL = "INFO"
+  # Permissive by default for a mobile client; narrow this to your app's origin(s)
+  # once you know them.
+  WILDECHO_CORS_ORIGINS = "*"
+  # This is a public default good for a small shared instance. Raise it if this
+  # deployment is for your own use, or lower it if you're worried about cost.
+  WILDECHO_RATE_LIMIT = "20/hour"
+
+[[mounts]]
+  source = "wildecho_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep at least one machine warm: the model takes ~1-2s to load, and Perch
+  # inference is CPU-heavy enough that a cold start under load is a bad first
+  # impression. Set to 0 instead if you'd rather save cost and accept that delay.
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "40s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/v1/health"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

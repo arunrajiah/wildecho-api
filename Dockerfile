@@ -41,12 +41,17 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
     WILDECHO_MODEL_PATH=/app/models/perch_v2.onnx \
-    WILDECHO_TAXONOMY_PATH=/app/data/taxonomy.csv
+    WILDECHO_TAXONOMY_PATH=/app/data/taxonomy.csv \
+    WILDECHO_CALIBRATION_PATH=/app/data/calibration.yaml \
+    WILDECHO_FEEDBACK_DB_PATH=/app/data/feedback.sqlite3 \
+    WILDECHO_FEEDBACK_CLIPS_DIR=/app/data/feedback_clips
 
 # ffmpeg does all container parsing and resampling. curl is only here so the
-# container healthcheck has something to call.
+# container healthcheck has something to call. gosu lets entrypoint.sh drop root
+# privileges after fixing ownership of a freshly mounted volume - see its
+# comments for why that's needed on hosted platforms.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && apt-get install -y --no-install-recommends ffmpeg curl gosu \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -55,13 +60,17 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY data ./data
 COPY scripts ./scripts
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Run unprivileged. models/ is created here so a read-only bind mount can land on
-# an existing directory owned by the app user.
+# models/ is created here so a read-only bind mount (docker-compose) can land on
+# an existing directory owned by the app user. The image is left running as root
+# by design - entrypoint.sh always drops to this unprivileged user via gosu
+# before the application itself ever runs, after first fixing permissions on any
+# freshly mounted volume that root alone could otherwise write to.
 RUN useradd --create-home --uid 10001 wildecho \
     && mkdir -p /app/models \
     && chown -R wildecho:wildecho /app
-USER wildecho
 
 EXPOSE 8000
 
@@ -70,4 +79,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://localhost:8000/v1/health || exit 1
 
+# entrypoint.sh drops root privileges, optionally fetches the model weights (see
+# its comments), then hands off to whatever CMD says.
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "wildecho_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

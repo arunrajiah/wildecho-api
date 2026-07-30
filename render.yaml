@@ -1,0 +1,55 @@
+# Render Blueprint for wildecho-api. https://render.com/docs/blueprint-spec
+#
+# Quickstart: push this repo to GitHub, then in the Render dashboard use
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file and
+# provisions the service and its disk.
+#
+# Model weights are fetched automatically on first boot (see docker/entrypoint.sh)
+# because WILDECHO_AUTO_DOWNLOAD_MODEL is set below, onto the persistent disk, so
+# it only happens once across restarts and deploys.
+#
+# Sizing: the model process is ~1.2 GB resident (390 MiB weights plus ONNX
+# Runtime's arenas). Render's smallest "starter" plan (512 MB) will not fit it -
+# this blueprint requests "standard" (2 GB). See README "Capacity planning" for
+# the throughput a plan like this can sustain.
+#
+# The exact keys Render's Blueprint spec accepts (`runtime` vs `env`, disk syntax,
+# plan names) change over time; if a deploy fails on parsing this file, check
+# https://render.com/docs/blueprint-spec for the current schema and adjust.
+
+services:
+  - type: web
+    name: wildecho-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: standard
+    region: oregon
+    healthCheckPath: /v1/health
+    disk:
+      name: wildecho-data
+      mountPath: /data
+      sizeGB: 3
+    envVars:
+      - key: WILDECHO_MODEL_PATH
+        value: /data/models/perch_v2.onnx
+      - key: WILDECHO_TAXONOMY_PATH
+        value: /app/data/taxonomy.csv
+      - key: WILDECHO_FEEDBACK_DB_PATH
+        value: /data/feedback.sqlite3
+      - key: WILDECHO_FEEDBACK_CLIPS_DIR
+        value: /data/feedback_clips
+      - key: WILDECHO_AUTO_DOWNLOAD_MODEL
+        value: "true"
+      - key: WILDECHO_LOG_FORMAT
+        value: json
+      - key: WILDECHO_LOG_LEVEL
+        value: INFO
+      # Permissive by default for a mobile client; narrow this to your app's
+      # origin(s) once you know them.
+      - key: WILDECHO_CORS_ORIGINS
+        value: "*"
+      # A public default good for a small shared instance. Raise it for your own
+      # use, or lower it if you're worried about cost.
+      - key: WILDECHO_RATE_LIMIT
+        value: 20/hour
