@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import tempfile
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Request, Response, UploadFile, status
+from fastapi import FastAPI, File, Form, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 from .audio import (
@@ -32,12 +36,22 @@ from .config import (
     Settings,
     get_settings,
 )
+from .feedback import (
+    FeedbackDisabledError,
+    FeedbackRecord,
+    FeedbackStore,
+    FeedbackStoreUnavailableError,
+    SQLiteFeedbackStore,
+    match_correction,
+)
 from .inference import WINDOW_STRIDE_SECONDS, ModelLoadError, get_load_error, get_model, load_model
+from .logging_utils import configure_logging, get_request_id, new_request_id, set_request_id
 from .schemas import (
     AboutResponse,
     Attribution,
     ClipMetadata,
     ErrorResponse,
+    FeedbackResponse,
     HealthResponse,
     IdentifyResponse,
     ModelStatus,
@@ -92,9 +106,32 @@ class AppState:
     def __init__(self) -> None:
         self.taxonomy: Taxonomy | None = None
         self.taxonomy_error: str | None = None
+        self.feedback_store: FeedbackStore | None = None
+        self.feedback_error: str | None = None
 
 
 state = AppState()
+
+
+async def _init_feedback_store(settings: Settings) -> None:
+    if not settings.feedback_enabled:
+        state.feedback_store = None
+        state.feedback_error = None
+        return
+    store = SQLiteFeedbackStore(settings.feedback_db_path)
+    try:
+        await run_in_threadpool(store.init)
+    except (OSError, sqlite3.Error) as exc:
+        # OSError covers mkdir/permission failures on the containing directory;
+        # sqlite3.Error covers the database itself. Either way this must degrade
+        # rather than crash startup - feedback is optional, the service is not.
+        state.feedback_store = None
+        state.feedback_error = str(exc)
+        logger.error("feedback store unavailable: %s", exc)
+    else:
+        state.feedback_store = store
+        state.feedback_error = None
+        logger.info("feedback store ready at %s", settings.feedback_db_path)
 
 
 def _load_taxonomy_into_state(settings: Settings) -> None:
@@ -111,11 +148,9 @@ def _load_taxonomy_into_state(settings: Settings) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-    )
+    configure_logging(settings.log_level, settings.log_format)
     _load_taxonomy_into_state(settings)
+    await _init_feedback_store(settings)
     try:
         load_model(settings)
     except ModelLoadError as exc:
@@ -145,6 +180,7 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_tags=[
         {"name": "identify", "description": "Species identification from audio."},
+        {"name": "feedback", "description": "Opt-in, locally stored accuracy corrections."},
         {"name": "meta", "description": "Health, provenance and coverage."},
     ],
 )
@@ -200,6 +236,19 @@ async def ffmpeg_error_handler(request: Request, exc: FfmpegUnavailableError) ->
         "ffmpeg_unavailable",
         "Audio decoding is unavailable on this server because ffmpeg is not installed.",
     )
+
+
+@app.exception_handler(FeedbackDisabledError)
+async def feedback_disabled_handler(request: Request, exc: FeedbackDisabledError) -> Response:
+    return _error(status.HTTP_404_NOT_FOUND, "feedback_disabled", str(exc))
+
+
+@app.exception_handler(FeedbackStoreUnavailableError)
+async def feedback_unavailable_handler(
+    request: Request, exc: FeedbackStoreUnavailableError
+) -> Response:
+    logger.error("feedback store unavailable: %s", exc)
+    return _error(status.HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc))
 
 
 def _rate_limit() -> str:
@@ -292,14 +341,23 @@ async def identify_endpoint(
         if size == 0:
             raise AudioEmptyError("The uploaded file is empty.")
 
-        decoded = decode_file(destination, active_settings)
-        result = model.identify(decoded.samples, decoded.sample_rate)
+        # decode_file (an ffmpeg subprocess) and model.identify (ONNX Runtime) are
+        # both synchronous, CPU/IO-bound calls. Awaiting them directly would block
+        # this single process's event loop for their whole duration, serialising
+        # every concurrent request behind one at a time. Running them in the
+        # threadpool keeps the loop free to accept and log other requests, and -
+        # since both release the GIL while their C code runs - lets genuinely
+        # concurrent requests use multiple cores instead of only one. See the
+        # README "Capacity planning" section for the throughput math this enables.
+        decoded = await run_in_threadpool(decode_file, destination, active_settings)
+        result = await run_in_threadpool(model.identify, decoded.samples, decoded.sample_rate)
 
     return IdentifyResponse(
         predictions=result.predictions,
         low_confidence=result.low_confidence,
         non_animal_top_class=result.non_animal_top_class,
         model_version=active_settings.model_version,
+        request_id=get_request_id() or new_request_id(),
         metadata=ClipMetadata(
             duration_seconds=round(result.duration_seconds, 3),
             windows_processed=result.windows_processed,
@@ -310,6 +368,132 @@ async def identify_endpoint(
             processed_sample_rate=decoded.sample_rate,
             inference_ms=round(result.inference_ms, 2),
         ),
+    )
+
+
+@app.post(
+    "/v1/feedback",
+    response_model=FeedbackResponse,
+    tags=["feedback"],
+    summary="Submit a correction for a previous identification",
+    responses={
+        404: {"model": ErrorResponse, "description": "Feedback is disabled on this server"},
+        413: {"model": ErrorResponse, "description": "Optional clip upload too large"},
+        422: {"model": ErrorResponse, "description": "Missing corrected_text"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        503: {"model": ErrorResponse, "description": "Feedback store unavailable"},
+    },
+)
+@limiter.limit(_rate_limit)
+async def feedback_endpoint(
+    request: Request,
+    corrected_text: str = Form(
+        ...,
+        min_length=1,
+        description=(
+            "The species you believe this clip actually is: a scientific or common name "
+            "(matched case-insensitively against the taxonomy) or free text if neither is "
+            "known. Always stored verbatim regardless of whether it matches."
+        ),
+    ),
+    clip_id: str | None = Form(
+        default=None,
+        description=(
+            "An identifier you choose, for correlating with your own records. Not validated."
+        ),
+    ),
+    request_id: str | None = Form(
+        default=None,
+        description="The request_id from the original /v1/identify response, for correlation.",
+    ),
+    original_scientific_name: str | None = Form(
+        default=None,
+        description="What the model originally predicted as top-1, if you have it.",
+    ),
+    original_confidence: float | None = Form(
+        default=None,
+        description="The model's original top-1 confidence, if you have it.",
+    ),
+    notes: str | None = Form(
+        default=None,
+        description="Any free-text context, e.g. how you know the correct identification.",
+    ),
+    file: UploadFile | None = File(
+        default=None,
+        description="Optional: the audio clip this correction is about.",
+    ),
+) -> FeedbackResponse:
+    """Record a user-submitted correction for later review and model tuning.
+
+    Entirely local and opt-in: nothing is collected unless a client calls this
+    endpoint, storage is a SQLite file on this machine by default, and nothing
+    submitted here is sent anywhere else unless you build a remote sync yourself.
+    See README "Feedback" for the full privacy note and how to disable this
+    endpoint or swap in Postgres.
+    """
+    active_settings = get_settings()
+    if not active_settings.feedback_enabled:
+        raise FeedbackDisabledError(
+            "Feedback is disabled on this server. Enable it with WILDECHO_FEEDBACK_ENABLED=true."
+        )
+    store = state.feedback_store
+    if store is None:
+        raise FeedbackStoreUnavailableError(
+            state.feedback_error or "The feedback store failed to initialize. Check server logs."
+        )
+
+    stored_audio = False
+    clip_path: str | None = None
+    if file is not None and file.filename:
+        if not active_settings.feedback_store_audio:
+            await file.read()  # drain the multipart body; nothing is written to disk
+        else:
+            clips_dir = active_settings.feedback_clips_dir
+            clips_dir.mkdir(parents=True, exist_ok=True)
+            suffix = Path(file.filename).suffix or ".bin"
+            # A generated name, never the client's filename, avoids path traversal
+            # and collisions between submissions.
+            destination = clips_dir / f"{new_request_id()}{suffix}"
+            size = await _spool_upload(file, destination, active_settings.feedback_max_upload_bytes)
+            if size == 0:
+                destination.unlink(missing_ok=True)
+            else:
+                clip_path = str(destination)
+                stored_audio = True
+
+    taxonomy = state.taxonomy
+    matched = match_correction(corrected_text, taxonomy) if taxonomy is not None else None
+
+    record = FeedbackRecord(
+        created_at=datetime.now(UTC).isoformat(),
+        request_id=request_id,
+        clip_id=clip_id,
+        clip_path=clip_path,
+        original_scientific_name=original_scientific_name,
+        original_confidence=original_confidence,
+        corrected_text=corrected_text,
+        matched=matched,
+        notes=notes,
+        client_ip=get_remote_address(request),
+    )
+    feedback_id = await run_in_threadpool(store.insert, record)
+
+    logger.info(
+        "feedback %d recorded: corrected_text=%r matched=%s request_id=%s clip_id=%s",
+        feedback_id,
+        corrected_text,
+        matched.scientific_name if matched else None,
+        request_id,
+        clip_id,
+    )
+
+    return FeedbackResponse(
+        id=feedback_id,
+        received_at=record.created_at,
+        matched_scientific_name=matched.scientific_name if matched else None,
+        matched_common_name=matched.common_name if matched else None,
+        matched_taxonomic_group=matched.taxonomic_group if matched else None,
+        stored_audio=stored_audio,
     )
 
 
@@ -344,6 +528,8 @@ async def health_endpoint() -> HealthResponse:
         detail=error,
         num_classes=model.num_classes if model is not None else None,
         taxonomy_loaded=state.taxonomy is not None,
+        feedback_enabled=active_settings.feedback_enabled,
+        feedback_store_ready=state.feedback_store is not None,
         version=__version__,
     )
 
@@ -418,11 +604,36 @@ async def root() -> dict[str, str]:
     }
 
 
-# Registered last so it wraps every route above.
+# Registered last so it wraps every route above, including error responses that
+# our exception handlers turn into ordinary Responses.
 @app.middleware("http")
-async def add_version_header(
+async def request_context_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
+    """Binds a request ID for this request's lifetime and logs its outcome.
+
+    The ID is reused from the client's request_id_header if it sent one, so a
+    mobile client can mint its own and see it echoed back verbatim in these logs
+    and in a later /v1/feedback submission; otherwise a fresh one is generated.
+    Every log line anywhere during this request carries it automatically, via
+    logging_utils' contextvar-backed filter.
+    """
+    active_settings = get_settings()
+    incoming = request.headers.get(active_settings.request_id_header)
+    request_id = incoming.strip() if incoming and incoming.strip() else new_request_id()
+    set_request_id(request_id)
+
+    started = time.perf_counter()
     response = await call_next(request)
+    duration_ms = (time.perf_counter() - started) * 1000.0
+
+    logger.info(
+        "%s %s -> %d (%.1fms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration_ms,
+    )
+    response.headers[active_settings.request_id_header] = request_id
     response.headers["X-Wildecho-Version"] = __version__
     return response
