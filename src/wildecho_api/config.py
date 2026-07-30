@@ -40,6 +40,36 @@ def default_taxonomy_path() -> Path:
     return _repo_root() / "data" / "taxonomy.csv"
 
 
+def default_calibration_path() -> Path:
+    """Locate ``calibration.yaml``, whether running from a clone or an installed wheel."""
+    packaged = _package_root() / "data" / "calibration.yaml"
+    if packaged.exists():
+        return packaged
+    return _repo_root() / "data" / "calibration.yaml"
+
+
+def default_feedback_db_path() -> Path:
+    """``./data/feedback.sqlite3``, relative to the process's working directory.
+
+    Unlike ``default_taxonomy_path``, there is no packaged copy to fall back to -
+    this file is created fresh at runtime. Resolving it against ``_repo_root()``
+    would be wrong whenever the package is `pip install`ed rather than run from a
+    source checkout: ``_package_root()`` then points into site-packages, and
+    ``_repo_root()`` lands somewhere inside the virtualenv that the app has no
+    business creating files in (and may not even be writable). A cwd-relative
+    path is the common, predictable default for this kind of local, writable
+    state; every shipped deployment config (Docker, Fly, Render) sets this
+    explicitly anyway.
+    """
+    return Path("data") / "feedback.sqlite3"
+
+
+def default_feedback_clips_dir() -> Path:
+    """``./data/feedback_clips``, relative to the process's working directory. See
+    :func:`default_feedback_db_path` for why this isn't repo-root-relative."""
+    return Path("data") / "feedback_clips"
+
+
 class Settings(BaseSettings):
     """Service settings. Every field maps to ``WILDECHO_<FIELD_NAME>``."""
 
@@ -61,6 +91,14 @@ class Settings(BaseSettings):
     taxonomy_path: Path = Field(
         default_factory=default_taxonomy_path,
         description="Path to the index -> species CSV shipped in data/.",
+    )
+    calibration_path: Path = Field(
+        default_factory=default_calibration_path,
+        description=(
+            "Path to the per-taxonomic-group confidence calibration file (YAML or JSON, "
+            "sniffed by extension). A missing file means no calibration is applied, "
+            "identical to the raw model output. See data/calibration.yaml."
+        ),
     )
     model_version: str = Field(
         default="perch_v2",
@@ -131,6 +169,58 @@ class Settings(BaseSettings):
     )
     rate_limit_enabled: bool = Field(default=True, description="Set false to disable limiting.")
     log_level: str = Field(default="INFO", description="Root log level for the service.")
+    log_format: str = Field(
+        default="text",
+        description=(
+            "'text' for human-readable console output (the friendlier local default) or "
+            "'json' for one structured JSON object per line, which is what hosted log "
+            "aggregators (Fly, Render, anything shipping to Loki/CloudWatch/etc.) want. "
+            "Every line includes a request_id when logged during a request."
+        ),
+    )
+    request_id_header: str = Field(
+        default="X-Request-ID",
+        description=(
+            "Response header carrying the request ID. If the client sends this header on "
+            "the way in, its value is reused instead of generating a new one, so a mobile "
+            "app can mint its own ID and have it show up in this server's logs verbatim."
+        ),
+    )
+
+    # -- Feedback (opt-in accuracy corrections, see README "Feedback") -------
+    feedback_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enables POST /v1/feedback. This only controls whether the endpoint exists on "
+            "this server; nothing is collected unless a client actually calls it, and "
+            "nothing submitted here is sent anywhere else unless you build a remote sync "
+            "yourself. Set false to remove the endpoint entirely (404)."
+        ),
+    )
+    feedback_db_path: Path = Field(
+        default_factory=default_feedback_db_path,
+        description=(
+            "SQLite database file for feedback corrections. Created on first use. See "
+            "README 'Feedback' for how to swap in Postgres instead."
+        ),
+    )
+    feedback_store_audio: bool = Field(
+        default=True,
+        description=(
+            "When a feedback submission includes an audio file, save it to "
+            "feedback_clips_dir so it can be reviewed later. Set false to accept only the "
+            "text correction and discard any uploaded audio immediately after decoding."
+        ),
+    )
+    feedback_clips_dir: Path = Field(
+        default_factory=default_feedback_clips_dir,
+        description="Directory audio from feedback submissions is saved to, if enabled.",
+    )
+    feedback_max_upload_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        gt=0,
+        description="Same idea as max_upload_bytes, applied to /v1/feedback's optional file.",
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -149,6 +239,14 @@ class Settings(BaseSettings):
     @classmethod
     def _upper_log_level(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("log_format")
+    @classmethod
+    def _validate_log_format(cls, value: str) -> str:
+        normalised = value.strip().lower()
+        if normalised not in ("text", "json"):
+            raise ValueError(f"log_format must be 'text' or 'json', got {value!r}")
+        return normalised
 
 
 @lru_cache(maxsize=1)
