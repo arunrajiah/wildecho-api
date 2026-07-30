@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 
+import httpx
 import numpy as np
 import pytest
 from conftest import noise, tone
@@ -327,3 +329,58 @@ def test_openapi_schema_is_valid(client) -> None:
 
 def test_unknown_route_is_404(client) -> None:
     assert client.get("/v1/nope").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Request IDs
+# ---------------------------------------------------------------------------
+def test_identify_response_includes_a_request_id(client, wav_bytes) -> None:
+    response = client.post(
+        "/v1/identify", files={"file": ("clip.wav", wav_bytes(tone(6.0)), "audio/wav")}
+    )
+    body = response.json()
+    assert body["request_id"]
+    assert response.headers["X-Request-ID"] == body["request_id"]
+
+
+def test_incoming_request_id_is_echoed_back(client) -> None:
+    response = client.get("/v1/health", headers={"X-Request-ID": "client-supplied-id"})
+    assert response.headers["X-Request-ID"] == "client-supplied-id"
+
+
+def test_requests_without_an_incoming_id_get_distinct_generated_ones(client) -> None:
+    first = client.get("/v1/health").headers["X-Request-ID"]
+    second = client.get("/v1/health").headers["X-Request-ID"]
+    assert first != second
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: decode_file and model.identify run in a threadpool (see main.py)
+# specifically so concurrent requests don't serialize behind one another.
+# ---------------------------------------------------------------------------
+@requires_ffmpeg
+async def test_concurrent_identify_requests_all_succeed(
+    client, wav_bytes, nightjar_index: int
+) -> None:
+    """A handful of simultaneous requests must all complete correctly.
+
+    Uses an async client against the same ASGI app the `client` fixture already
+    configured (fake model installed, taxonomy loaded), so this exercises the real
+    run_in_threadpool path in main.py rather than TestClient's synchronous one.
+    """
+    payload = wav_bytes(tone(6.0))
+    transport = httpx.ASGITransport(app=main.app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+
+        async def one() -> httpx.Response:
+            return await async_client.post(
+                "/v1/identify", files={"file": ("clip.wav", payload, "audio/wav")}
+            )
+
+        responses = await asyncio.gather(*(one() for _ in range(8)))
+
+    assert all(r.status_code == 200 for r in responses)
+    request_ids = {r.json()["request_id"] for r in responses}
+    assert len(request_ids) == 8, "each concurrent request must get its own distinct request_id"
+    assert all(r.json()["predictions"][0]["class_index"] == nightjar_index for r in responses)

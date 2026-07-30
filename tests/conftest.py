@@ -13,6 +13,7 @@ need real weights are marked ``model`` and deselected by default.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -25,8 +26,18 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 NIGHTJAR_CLIP = FIXTURES / "european_nightjar_xc1008591.mp3"
 
+#: A throwaway directory for the *default* feedback store every client/bare_client
+#: fixture gets. Without this, every test run would create and grow the repo's
+#: real data/feedback.sqlite3 - gitignored, so it wouldn't leak into commits, but
+#: it would pollute local dev state and make row/ID counts test-order-dependent.
+#: Tests that need a specific, isolated store (e.g. asserting the first row gets
+#: id=1) use the `isolated_feedback_store` fixture below instead.
+_DEFAULT_FEEDBACK_DIR = Path(tempfile.mkdtemp(prefix="wildecho-test-feedback-"))
+
 os.environ.setdefault("WILDECHO_TAXONOMY_PATH", str(REPO_ROOT / "data" / "taxonomy.csv"))
 os.environ.setdefault("WILDECHO_MODEL_PATH", str(REPO_ROOT / "models" / "perch_v2.onnx"))
+os.environ.setdefault("WILDECHO_FEEDBACK_DB_PATH", str(_DEFAULT_FEEDBACK_DIR / "feedback.sqlite3"))
+os.environ.setdefault("WILDECHO_FEEDBACK_CLIPS_DIR", str(_DEFAULT_FEEDBACK_DIR / "feedback_clips"))
 # Off by default so ordinary tests are not throttled. The rate limiting test turns
 # the limiter back on for itself.
 os.environ.setdefault("WILDECHO_RATE_LIMIT_ENABLED", "false")
@@ -173,6 +184,36 @@ def client(make_model, nightjar_index: int) -> Iterator[Any]:
             yield test_client
         finally:
             inference.set_model(None)
+
+
+@pytest.fixture
+def isolated_feedback_client(
+    tmp_path, monkeypatch, make_model, nightjar_index: int
+) -> Iterator[Any]:
+    """Like `client`, but its feedback store is a fresh, per-test SQLite file.
+
+    The default `client` fixture points at a directory shared by the whole test
+    session (see `_DEFAULT_FEEDBACK_DIR` above), which is fine for tests that don't
+    care about specific row IDs. Tests asserting something like "the first
+    submission gets id=1" need this instead.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("WILDECHO_FEEDBACK_DB_PATH", str(tmp_path / "feedback.sqlite3"))
+    monkeypatch.setenv("WILDECHO_FEEDBACK_CLIPS_DIR", str(tmp_path / "feedback_clips"))
+    get_settings.cache_clear()
+    try:
+        with TestClient(main.app) as test_client:
+            inference.set_model(make_model(logits_favouring(nightjar_index)))
+            main.state.taxonomy = load_taxonomy(TAXONOMY_PATH, expected_rows=NUM_CLASSES)
+            main.state.taxonomy_error = None
+            _reset_rate_limiter()
+            try:
+                yield test_client
+            finally:
+                inference.set_model(None)
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.fixture
