@@ -25,6 +25,7 @@ import numpy as np
 import onnxruntime as ort
 
 from .audio import resample, to_mono, validate_samples
+from .calibration import Calibration, CalibrationError, load_calibration
 from .config import (
     NUM_CLASSES,
     TARGET_SAMPLE_RATE,
@@ -114,12 +115,16 @@ class PerchModel:
         taxonomy: Taxonomy,
         settings: Settings,
         model_path: Path | None = None,
+        calibration: Calibration | None = None,
     ) -> None:
         self.session = session
         self.taxonomy = taxonomy
         self.settings = settings
         self.model_path = model_path
         self.num_classes = len(taxonomy)
+        # Defaults to a no-op so existing callers (and tests) that build a
+        # PerchModel directly without a calibration file keep working unchanged.
+        self.calibration = calibration or Calibration.noop()
 
     # -- Loading -------------------------------------------------------------
     @classmethod
@@ -140,6 +145,11 @@ class PerchModel:
         except TaxonomyError as exc:
             raise ModelLoadError(str(exc)) from exc
 
+        try:
+            calibration = load_calibration(settings.calibration_path)
+        except CalibrationError as exc:
+            raise ModelLoadError(str(exc)) from exc
+
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         if settings.onnx_intra_op_threads > 0:
@@ -155,12 +165,13 @@ class PerchModel:
 
         cls._validate_signature(session, model_path)
         logger.info(
-            "loaded Perch model from %s in %.2fs (%d classes)",
+            "loaded Perch model from %s in %.2fs (%d classes, calibration=%s)",
             model_path,
             time.perf_counter() - started,
             len(taxonomy),
+            calibration.source_path or "none (no-op)",
         )
-        return cls(session, taxonomy, settings, model_path=model_path)
+        return cls(session, taxonomy, settings, model_path=model_path, calibration=calibration)
 
     @staticmethod
     def _validate_signature(session: ort.InferenceSession, model_path: Path) -> None:
@@ -221,9 +232,9 @@ class PerchModel:
 
         non_animal_top_class = self._detect_non_animal_top(probabilities)
         predictions = self._rank_species(probabilities)
-        low_confidence = (
-            not predictions or predictions[0].confidence < self.settings.low_confidence_threshold
-        )
+        # predictions[0].low_confidence already reflects this candidate's group
+        # calibration (see _rank_species), so the response-level flag just mirrors it.
+        low_confidence = not predictions or predictions[0].low_confidence
 
         return InferenceResult(
             predictions=predictions,
@@ -256,7 +267,13 @@ class PerchModel:
         return entry.label
 
     def _rank_species(self, probabilities: np.ndarray) -> list[Prediction]:
-        """Take the top-k species, excluding general sound event classes."""
+        """Take the top-k species, excluding general sound event classes.
+
+        Ranking (which offsets are selected and their order) is decided purely by
+        the model's raw probability, before calibration. Only the confidence value
+        and low_confidence flag attached to each ranked candidate are adjusted by
+        that candidate's taxonomic group, via ``self.calibration``.
+        """
         species_indices = self.taxonomy.species_indices
         species_probabilities = probabilities[species_indices]
 
@@ -268,19 +285,23 @@ class PerchModel:
         partitioned = np.argpartition(-species_probabilities, wanted - 1)[:wanted]
         ordered = partitioned[np.argsort(-species_probabilities[partitioned])]
 
-        threshold = self.settings.low_confidence_threshold
+        base_threshold = self.settings.low_confidence_threshold
         predictions: list[Prediction] = []
         for offset in ordered:
             class_index = int(species_indices[offset])
             entry = self.taxonomy[class_index]
-            confidence = float(species_probabilities[offset])
+            raw_confidence = float(species_probabilities[offset])
+            confidence, low_confidence = self.calibration.apply(
+                raw_confidence, entry.group, base_threshold
+            )
             predictions.append(
                 Prediction(
                     common_name=entry.common_name,
                     scientific_name=entry.scientific_name or entry.label,
                     taxonomic_group=entry.group,
                     confidence=round(confidence, 6),
-                    low_confidence=confidence < threshold,
+                    raw_confidence=round(raw_confidence, 6),
+                    low_confidence=low_confidence,
                     class_index=class_index,
                 )
             )

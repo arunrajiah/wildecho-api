@@ -1,0 +1,57 @@
+# Per-taxonomic-group confidence calibration for wildecho-api.
+#
+# Perch 2.0 is documented as far stronger on birds than on the other taxa it
+# covers (see README "Accuracy and limitations"): birds are 70% of its species
+# classes and dominate its training data, while frogs, insects and mammals were
+# added in the 2.0 release and are more thinly and unevenly sampled. Its raw
+# softmax score does not know this - a mammal prediction at 0.6 confidence is
+# not the same reliability as a bird prediction at 0.6.
+#
+# This file lets an operator correct for that without a code change:
+#
+#   confidence_scale  - multiplies a prediction's displayed confidence for taxa
+#                        in this group (e.g. 0.85 discounts it by 15%). The
+#                        result is clamped to [0, 1].
+#   threshold_offset  - added to WILDECHO_LOW_CONFIDENCE_THRESHOLD before the
+#                        low_confidence flag is decided for this group. A
+#                        positive offset means that group needs MORE
+#                        confidence before it is shown as trustworthy.
+#
+# The raw model ranking (which candidate is #1) is never touched by this file
+# - it is exactly what the model computed. Calibration only changes the
+# confidence number shown and the low_confidence flag, per prediction. The
+# unadjusted score is still returned as `raw_confidence` on every prediction,
+# so nothing here is destructive or hidden.
+#
+# These starting values are placeholders, not measurements. Birds are left
+# untouched (scale 1.0, offset 0.0) because that group is what the base model
+# was actually evaluated well on. The discounts on the other groups are a
+# conservative guess reflecting the documented coverage gap, not a fitted
+# correction against real accuracy data. Tune them once you have that data,
+# ideally from POST /v1/feedback corrections - see README "Confidence
+# calibration".
+#
+# Missing this file entirely is not an error: the service falls back to no
+# calibration at all (scale 1.0, offset 0.0 for every group), identical to
+# before this feature existed.
+
+default:
+  confidence_scale: 1.0
+  threshold_offset: 0.0
+
+groups:
+  bird:
+    confidence_scale: 1.0
+    threshold_offset: 0.0
+  frog:
+    confidence_scale: 0.85
+    threshold_offset: 0.10
+  insect:
+    confidence_scale: 0.85
+    threshold_offset: 0.10
+  mammal:
+    confidence_scale: 0.90
+    threshold_offset: 0.05
+  other:
+    confidence_scale: 0.75
+    threshold_offset: 0.15

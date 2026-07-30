@@ -32,6 +32,7 @@ class Prediction(BaseModel):
                 "scientific_name": "Caprimulgus europaeus",
                 "taxonomic_group": "bird",
                 "confidence": 0.7307,
+                "raw_confidence": 0.7307,
                 "low_confidence": False,
                 "class_index": 2211,
             }
@@ -51,12 +52,26 @@ class Prediction(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Softmax probability over all 14,795 classes, averaged across windows. "
-            "Use it to rank candidates, not as a calibrated probability of presence."
+            "Softmax probability, averaged across windows, after this taxon's group "
+            "calibration (see data/calibration.yaml) has been applied. This is the number "
+            "to show a user. Ranking is unaffected by calibration; only this value and "
+            "low_confidence change."
+        ),
+    )
+    raw_confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "The uncalibrated softmax probability over all 14,795 classes, before any "
+            "per-group adjustment. Equal to confidence when no calibration is configured."
         ),
     )
     low_confidence: bool = Field(
-        description="True when this candidate's own confidence is below the configured threshold."
+        description=(
+            "True when this candidate's calibrated confidence is below the threshold "
+            "effective for its taxonomic group (the configured base threshold plus that "
+            "group's threshold_offset)."
+        )
     )
     class_index: int = Field(
         ge=0, description="Raw Perch output index. Useful for debugging and for joining taxonomy."
@@ -84,7 +99,13 @@ class IdentifyResponse(BaseModel):
     """Response body for ``POST /v1/identify``."""
 
     predictions: list[Prediction] = Field(
-        description="Top candidates, highest confidence first. Non-animal classes are excluded."
+        description=(
+            "Top candidates, ordered by the model's own raw_confidence (highest first). "
+            "Non-animal classes are excluded. Because confidence is separately discounted "
+            "per taxonomic group (see data/calibration.yaml), it is usually but not always "
+            "monotonic across this list: order reflects the model's actual belief and is "
+            "never reshuffled by calibration."
+        )
     )
     low_confidence: bool = Field(
         description=(
@@ -102,6 +123,13 @@ class IdentifyResponse(BaseModel):
     )
     model_version: str = Field(description="Identifier of the model that produced this result.")
     metadata: ClipMetadata
+    request_id: str = Field(
+        description=(
+            "Correlates this response with the server's logs. Also returned as the "
+            "X-Request-ID response header. Hand this back in POST /v1/feedback's "
+            "request_id field when submitting a correction for this result."
+        )
+    )
 
 
 class ModelStatus(StrEnum):
@@ -122,6 +150,10 @@ class HealthResponse(BaseModel):
     )
     num_classes: int | None = Field(default=None, description="Classes in the loaded label set.")
     taxonomy_loaded: bool
+    feedback_enabled: bool = Field(description="Whether POST /v1/feedback is enabled by config.")
+    feedback_store_ready: bool = Field(
+        description="Whether the feedback store initialized successfully, when enabled."
+    )
     version: str = Field(description="wildecho-api version.")
 
 
@@ -157,6 +189,26 @@ class AboutResponse(BaseModel):
     coverage: TaxaCoverage
     attribution: Attribution
     limits: dict[str, float | int | str]
+
+
+class FeedbackResponse(BaseModel):
+    """Response body for ``POST /v1/feedback``."""
+
+    id: int = Field(description="Storage-assigned ID for this correction.")
+    received_at: str = Field(description="UTC timestamp this correction was recorded, ISO 8601.")
+    matched_scientific_name: str | None = Field(
+        default=None,
+        description=(
+            "Set when corrected_text matched a known species in the taxonomy by exact "
+            "scientific or common name (case-insensitive). Null means the free text was "
+            "stored as-is with no automatic match; it can still be reviewed manually."
+        ),
+    )
+    matched_common_name: str | None = Field(default=None)
+    matched_taxonomic_group: TaxonomicGroup | None = Field(default=None)
+    stored_audio: bool = Field(
+        description="Whether an uploaded clip was saved to feedback_clips_dir for this submission."
+    )
 
 
 class ErrorResponse(BaseModel):

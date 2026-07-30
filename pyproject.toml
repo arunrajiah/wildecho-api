@@ -43,6 +43,7 @@ dependencies = [
     "numpy>=1.26",
     "onnxruntime>=1.18",
     "slowapi>=0.1.9",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,7 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.6",
     "mypy>=1.11",
+    "types-PyYAML>=6.0",
 ]
 
 [project.urls]
@@ -70,6 +72,7 @@ packages = ["src/wildecho_api"]
 # shipped inside the wheel so `pip install wildecho-api` works standalone.
 [tool.hatch.build.targets.wheel.force-include]
 "data/taxonomy.csv" = "wildecho_api/data/taxonomy.csv"
+"data/calibration.yaml" = "wildecho_api/data/calibration.yaml"
 
 [tool.hatch.build.targets.sdist]
 include = ["src", "data", "tests", "scripts", "README.md", "LICENSE", "NOTICE"]

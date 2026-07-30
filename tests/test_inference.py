@@ -110,11 +110,21 @@ def test_identify_ranks_the_expected_species_first(
     assert top.taxonomic_group is TaxonomicGroup.BIRD
 
 
-def test_confidences_are_descending_and_in_range(make_model, nightjar_index: int) -> None:
+def test_raw_confidences_are_descending_and_in_range(make_model, nightjar_index: int) -> None:
+    """Order is decided by raw_confidence; calibration must never reshuffle it."""
     model = make_model(logits_favouring(nightjar_index))
-    confidences = [p.confidence for p in model.identify(tone(6.0), TARGET_SAMPLE_RATE).predictions]
-    assert confidences == sorted(confidences, reverse=True)
-    assert all(0.0 <= c <= 1.0 for c in confidences)
+    predictions = model.identify(tone(6.0), TARGET_SAMPLE_RATE).predictions
+    raw = [p.raw_confidence for p in predictions]
+    assert raw == sorted(raw, reverse=True)
+    assert all(0.0 <= p.confidence <= 1.0 for p in predictions)
+    assert all(0.0 <= p.raw_confidence <= 1.0 for p in predictions)
+
+
+def test_calibration_noop_leaves_confidence_equal_to_raw(make_model, nightjar_index: int) -> None:
+    """With no calibration file loaded, confidence and raw_confidence must be identical."""
+    model = make_model(logits_favouring(nightjar_index))
+    for prediction in model.identify(tone(6.0), TARGET_SAMPLE_RATE).predictions:
+        assert prediction.confidence == prediction.raw_confidence
 
 
 def test_high_logit_produces_high_confidence(make_model, nightjar_index: int) -> None:
