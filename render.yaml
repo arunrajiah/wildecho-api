@@ -43,6 +43,9 @@ services:
         value: "true"
       - key: WILDECHO_LOG_FORMAT
         value: json
+      # Trust X-Forwarded-For from the Render proxy so rate limits key on real client IPs.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
       - key: WILDECHO_LOG_LEVEL
         value: INFO
       # Permissive by default for a mobile client; narrow this to your app's

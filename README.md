@@ -538,6 +538,24 @@ the service and its disk. The blueprint requests the `standard` plan (2 GB) - se
 [Capacity planning](#capacity-planning) for why the model needs that much memory;
 Render's smallest `starter` plan (512 MB) will not fit it.
 
+### Hugging Face Spaces (free)
+
+```bash
+hf auth login                      # write token from huggingface.co/settings/tokens
+scripts/deploy_hf_space.sh         # creates/updates <you>/wildecho-api
+```
+
+The free CPU tier (2 vCPU, 16 GB RAM) fits the model comfortably. Spaces has no
+persistent volume on that tier and never runs containers as root, so
+[`deploy/huggingface/Dockerfile`](deploy/huggingface/Dockerfile) bakes the weights
+in at build time, runs as uid 1000, and disables feedback audio storage. Free
+Spaces sleep after 48 hours without traffic; the first request afterwards wakes
+them, which takes a minute or two.
+
+All three configs set `FORWARDED_ALLOW_IPS=*` so uvicorn trusts the platform
+proxy's `X-Forwarded-For` header. Without it, every client appears to share the
+proxy's IP and the per-IP rate limit becomes one global limit.
+
 ### Auto-download on hosted platforms
 
 Locally, you run `python scripts/download_model.py` yourself and mount the result

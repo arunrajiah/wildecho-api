@@ -32,6 +32,8 @@ primary_region = "iad"
   WILDECHO_FEEDBACK_CLIPS_DIR = "/data/feedback_clips"
   WILDECHO_AUTO_DOWNLOAD_MODEL = "true"
   WILDECHO_LOG_FORMAT = "json"
+  # Trust X-Forwarded-For from the Fly proxy so rate limits key on real client IPs.
+  FORWARDED_ALLOW_IPS = "*"
   WILDECHO_LOG_LEVEL = "INFO"
   # Permissive by default for a mobile client; narrow this to your app's origin(s)
   # once you know them.
