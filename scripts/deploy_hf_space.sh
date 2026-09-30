@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SPACE="${1:-$(hf auth whoami | head -1 | awk '{print $NF}')/wildecho-api}"
+SPACE="${1:-$(hf auth whoami | head -1 | sed -E 's/^(user)?[=: ]*//I; s/[[:space:]].*//')/wildecho-api}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
