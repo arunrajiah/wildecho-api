@@ -109,6 +109,21 @@ class Settings(BaseSettings):
         ge=0,
         description="ONNX Runtime intra-op thread count. 0 lets the runtime decide.",
     )
+    onnx_memory_arena: bool = Field(
+        default=True,
+        description=(
+            "Keep ONNX Runtime's CPU memory arena. It is faster, but holds peak inference "
+            "memory for the life of the process; set false on shared hosts to release it."
+        ),
+    )
+    max_concurrent_inferences: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Cap on model runs in flight at once; extra requests wait their turn. 0 means "
+            "no cap. Each run can use several hundred MB, so set 1 or 2 on small hosts."
+        ),
+    )
 
     # -- Prediction behaviour ------------------------------------------------
     top_k: int = Field(default=10, ge=1, le=100, description="Candidates returned per request.")

@@ -384,3 +384,30 @@ async def test_concurrent_identify_requests_all_succeed(
     request_ids = {r.json()["request_id"] for r in responses}
     assert len(request_ids) == 8, "each concurrent request must get its own distinct request_id"
     assert all(r.json()["predictions"][0]["class_index"] == nightjar_index for r in responses)
+
+
+def test_inference_slot_serialises_when_capped() -> None:
+    import asyncio
+    import contextlib
+
+    from wildecho_api.main import _inference_slot
+
+    assert isinstance(_inference_slot(0), contextlib.nullcontext)
+    assert _inference_slot(1) is _inference_slot(1)
+
+    in_flight = 0
+    peak = 0
+
+    async def run() -> None:
+        nonlocal in_flight, peak
+        async with _inference_slot(1):
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+
+    async def main() -> None:
+        await asyncio.gather(*(run() for _ in range(4)))
+
+    asyncio.run(main())
+    assert peak == 1

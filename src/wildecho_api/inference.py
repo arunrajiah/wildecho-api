@@ -154,6 +154,7 @@ class PerchModel:
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         if settings.onnx_intra_op_threads > 0:
             options.intra_op_num_threads = settings.onnx_intra_op_threads
+        options.enable_cpu_mem_arena = settings.onnx_memory_arena
 
         started = time.perf_counter()
         try:

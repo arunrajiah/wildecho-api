@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import sqlite3
 import tempfile
@@ -143,6 +145,18 @@ def _load_taxonomy_into_state(settings: Settings) -> None:
         state.taxonomy = None
         state.taxonomy_error = str(exc)
         logger.error("taxonomy unavailable: %s", exc)
+
+
+_inference_semaphores: dict[int, asyncio.Semaphore] = {}
+
+
+def _inference_slot(limit: int) -> contextlib.AbstractAsyncContextManager[object]:
+    """Async context that holds one of ``limit`` inference slots (no-op when 0)."""
+    if limit <= 0:
+        return contextlib.nullcontext()
+    if limit not in _inference_semaphores:
+        _inference_semaphores[limit] = asyncio.Semaphore(limit)
+    return _inference_semaphores[limit]
 
 
 @asynccontextmanager
@@ -350,7 +364,8 @@ async def identify_endpoint(
         # concurrent requests use multiple cores instead of only one. See the
         # README "Capacity planning" section for the throughput math this enables.
         decoded = await run_in_threadpool(decode_file, destination, active_settings)
-        result = await run_in_threadpool(model.identify, decoded.samples, decoded.sample_rate)
+        async with _inference_slot(active_settings.max_concurrent_inferences):
+            result = await run_in_threadpool(model.identify, decoded.samples, decoded.sample_rate)
 
     return IdentifyResponse(
         predictions=result.predictions,
