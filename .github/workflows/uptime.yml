@@ -1,0 +1,46 @@
+name: Uptime
+
+# Watches the public instance. A failed run triggers GitHub's standard
+# failed-workflow email to the repo owner. GitHub pauses schedules in public repos
+# after 60 days without commits; re-enable from the Actions tab if that happens.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: https://wildecho.arunrajiah.com
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Health
+        run: |
+          for attempt in 1 2 3; do
+            body=$(curl -fsS --max-time 20 "$BASE_URL/v1/health") \
+              && echo "$body" | jq -e '.status == "ok" and .model_loaded == true' >/dev/null \
+              && { echo "$body"; exit 0; }
+            echo "attempt $attempt failed: ${body:-no response}"
+            sleep 20
+          done
+          exit 1
+
+      - name: Identify (daily)
+        if: github.event.schedule == '17 6 * * *' || github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/fixtures
+
+      - name: Identify a known clip
+        if: github.event.schedule == '17 6 * * *' || github.event_name == 'workflow_dispatch'
+        run: |
+          curl -fsS --max-time 90 -F "file=@tests/fixtures/european_nightjar_xc1008591.mp3" \
+            "$BASE_URL/v1/identify" > result.json
+          jq -e '.predictions[0].scientific_name == "Caprimulgus europaeus"' result.json \
+            || { cat result.json; exit 1; }
