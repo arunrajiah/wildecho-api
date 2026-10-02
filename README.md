@@ -64,6 +64,7 @@ curl -X POST http://localhost:8000/v1/identify \
 - [Capacity planning](#capacity-planning)
 - [How it works](#how-it-works)
 - [Development](#development)
+- [Part of an open wildlife toolkit](#part-of-an-open-wildlife-toolkit)
 - [Credits](#credits)
 - [License](#license)
 
@@ -728,6 +729,24 @@ ruff check . && ruff format --check . && mypy src scripts && pytest
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions
 (Conventional Commits, no model weights in git) and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## Part of an open wildlife toolkit
+
+This project is one of seven open source tools by [Arun Rajiah](https://www.arunrajiah.com) for listening to, identifying and mapping wildlife. They are independent, and each is useful alone, but they are built to work together.
+
+| Project | Role | What it does |
+|---|---|---|
+| [WDX](https://github.com/arunrajiah/wildlife-detection-exchange) | The shared format | An open JSON format for one wildlife detection: what was detected, where, when, by which classifier and with what confidence. Maps field by field to Darwin Core. |
+| [wdx-agent](https://github.com/arunrajiah/wdx-agent) | Share what your device detects | One dependency free Python file for a Raspberry Pi or any computer. Sends detections from BirdNET-Pi, BirdNET-Go, camera traps and bat detectors as WDX. |
+| [WildNetwork](https://github.com/arunrajiah/wildnetwork) | See the whole picture | A live, open map of bird, bat and other animal movement, built from WDX events and public networks. [wildnetwork.arunrajiah.com](https://wildnetwork.arunrajiah.com) |
+| [BirdEcho](https://github.com/arunrajiah/birdecho) | Follow your own station | Android companion app for BirdNET-Pi, BirdNET-Go and BirdWeather stations: today's detections, alerts for species you care about, history. |
+| [WildEcho](https://github.com/arunrajiah/wildecho) | Identify a sound on your phone | Record a short clip and get ranked species candidates. |
+| **wildecho-api** (this project) | The identification service | Self-hosted species identification from audio, using Google's open Perch 2.0 model. Runs on CPU, no API keys. Powers WildEcho. |
+| [SpeciesNet Studio](https://github.com/arunrajiah/speciesnet-studio) | Review camera trap results | Self-hosted interface for checking and correcting SpeciesNet classifier predictions before they are used. |
+
+**How this one fits.** wildecho-api is the identification engine behind [WildEcho](https://github.com/arunrajiah/wildecho). It is stateless and stores no detections. Returning results as WDX events, so that a client can share them with [WildNetwork](https://wildnetwork.arunrajiah.com), is planned.
+
+**Connected today:** wdx-agent sends to WildNetwork in the WDX format, and WildEcho uses wildecho-api. **Planned:** WDX export from BirdEcho, wildecho-api and SpeciesNet Studio.
 
 ## Credits
 
