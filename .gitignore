@@ -84,10 +84,5 @@ tmp/
 scratch/
 *.log
 
-# assistant notes, kept locally
-CLAUDE.md
-
-# Local AI assistant / OS / env files
-.claude/
-CLAUDE.local.md
+# Local OS / env files
 .mcp.json
